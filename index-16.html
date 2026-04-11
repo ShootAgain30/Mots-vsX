@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mots cachés</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 0; padding: 0;
+      background: #f0f0f0;
+      color: #222;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    header { padding: 10px 16px; text-align: center; }
+    h1 { margin: 0; font-size: 1.3rem; }
+    #theme-label { font-size: 12px; color: #888; margin-top: 2px; }
+    #game {
+      width: 100%;
+      max-width: 440px;
+      padding: 4px 10px 24px;
+    }
+    #grid-wrap { margin: 6px auto; }
+    #grid-canvas { display: block; touch-action: none; }
+    #score { text-align: center; font-size: 13px; color: #555; margin: 4px 0; }
+    #word-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      font-size: 12px;
+      margin-top: 6px;
+    }
+    .word-item {
+      padding: 3px 7px;
+      border-radius: 4px;
+      background: #fff;
+      border: 1px solid #ccc;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .word-item.found {
+      text-decoration: line-through;
+      background: #b5f5b5;
+      border-color: #3c9c3c;
+      color: #104010;
+    }
+    #mystery-zone {
+      display: none;
+      margin-top: 14px;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+    #mystery-zone.visible { display: flex; }
+    #mystery-hint {
+      font-size: 12px;
+      color: #888;
+      font-style: italic;
+      text-align: center;
+    }
+    #mystery-input-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    #mystery-input {
+      padding: 7px 10px;
+      border: 2px solid #4a90e2;
+      border-radius: 6px;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      width: 180px;
+      outline: none;
+      text-align: center;
+    }
+    #mystery-input.error {
+      border-color: #e24a4a;
+      background: #fff0f0;
+      animation: shake 0.3s ease;
+    }
+    @keyframes shake {
+      0%,100%{transform:translateX(0)}
+      25%{transform:translateX(-6px)}
+      75%{transform:translateX(6px)}
+    }
+    #mystery-submit {
+      padding: 7px 14px;
+      border-radius: 6px;
+      border: none;
+      background: #4a90e2;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #mystery-submit:active { transform: scale(0.97); }
+    #mystery-result {
+      font-size: 1rem;
+      font-weight: 700;
+      text-align: center;
+      min-height: 1.4em;
+    }
+    #mystery-result.win  { color: #1a7a1a; }
+    #mystery-result.fail { color: #c00; }
+    #controls { margin-top: 12px; display: flex; justify-content: center; }
+    button.main-btn {
+      padding: 8px 22px;
+      border-radius: 6px;
+      border: none;
+      background: #4a90e2;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,.2);
+    }
+    button.main-btn:active { transform: scale(0.97); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🔍 Mots cachés</h1>
+    <div id="theme-label"></div>
+  </header>
+  <main id="game">
+    <div id="grid-wrap"><canvas id="grid-canvas"></canvas></div>
+    <div id="score"></div>
+    <div id="word-list"></div>
+    <div id="mystery-zone">
+      <div id="mystery-hint">Les lettres en jaune forment le mot mystère.<br>Lis-les dans l'ordre et saisis-le !</div>
+      <div id="mystery-input-row">
+        <input id="mystery-input" type="text" maxlength="20" placeholder="MOT MYSTÈRE"
+               autocomplete="off" autocorrect="off" spellcheck="false" />
+        <button id="mystery-submit">OK</button>
+      </div>
+      <div id="mystery-result"></div>
+    </div>
+    <div id="controls">
+      <button class="main-btn" id="new-game">Nouvelle grille</button>
+    </div>
+  </main>
+
+<script src="mots.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════
+//  CONFIG
+// ═══════════════════════════════════════════════════════
+const GRID_SIZE = 12;
+const CELL = Math.min(30, Math.floor((Math.min(window.innerWidth, 440) - 20) / GRID_SIZE));
+
+// SECRETS_LIST et THEMES sont chargés depuis mots.js (chargé avant ce script)
+
+// Index SECRETS_BY_LEN construit automatiquement depuis SECRETS_LIST
+const SECRETS_BY_LEN = {};
+for (const s of SECRETS_LIST) {
+  if (!SECRETS_BY_LEN[s.length]) SECRETS_BY_LEN[s.length] = [];
+  SECRETS_BY_LEN[s.length].push(s);
+}
+const SECRET_LENGTHS = new Set(Object.keys(SECRETS_BY_LEN).map(Number));
+
+// Filtre les mots qui sont sous-chaînes d'autres mots du même thème
+function filterSubwords(words) {
+  return words.filter(w =>
+    !words.some(other => other !== w && other.includes(w))
+  );
+}
+
+// 8 directions groupées : 2 horizontales, 2 verticales, 4 diagonales
+const DIR = {
+  H:  [{dr:0,dc:1},{dr:0,dc:-1}],               // horizontales
+  V:  [{dr:1,dc:0},{dr:-1,dc:0}],               // verticales
+  D:  [{dr:1,dc:1},{dr:1,dc:-1},{dr:-1,dc:1},{dr:-1,dc:-1}], // diagonales
+};
+// Pool de directions avec quota : ~25% H, ~30% V, ~45% D
+// (les grilles du commerce ont toujours beaucoup de diagonales)
+function buildDirPool() {
+  return shuffle([
+    ...DIR.H, ...DIR.H,                          // 2×H  (25%)
+    ...DIR.V, ...DIR.V, ...DIR.V,                // 3×V  (37%)
+    ...DIR.D, ...DIR.D, ...DIR.D,                // 12×D (38% — diagonales ×3)
+  ]);
+}
+
+// ═══════════════════════════════════════════════════════
+//  UTILITAIRES
+// ═══════════════════════════════════════════════════════
+const randInt = n => Math.floor(Math.random() * n);
+const choice  = a => a[randInt(a.length)];
+function shuffle(a) {
+  a = [...a];
+  for (let i = a.length-1; i > 0; i--) {
+    const j = randInt(i+1); [a[i],a[j]] = [a[j],a[i]];
+  }
+  return a;
+}
+
+// Clé de case pour Set
+const key = (r,c) => r*100+c;
+
+// ═══════════════════════════════════════════════════════
+//  GÉNÉRATION
+// ═══════════════════════════════════════════════════════
+function makeGrid(n) { return Array.from({length:n}, () => Array(n).fill(null)); }
+function makeUsed(n) { return Array.from({length:n}, () => Array(n).fill(false)); }
+
+function canPlace(grid, word, r0, c0, dir) {
+  const n = grid.length;
+  for (let i = 0; i < word.length; i++) {
+    const r = r0+dir.dr*i, c = c0+dir.dc*i;
+    if (r<0||r>=n||c<0||c>=n) return false;
+    if (grid[r][c] !== null && grid[r][c] !== word[i]) return false;
+  }
+  return true;
+}
+
+function doPlace(grid, word, r0, c0, dir) {
+  for (let i = 0; i < word.length; i++)
+    grid[r0+dir.dr*i][c0+dir.dc*i] = word[i];
+}
+
+// Place un mot dans UNE direction imposée, position aléatoire
+// Retourne les cases ou null
+function tryPlaceInDir(grid, word, dir) {
+  const n = grid.length;
+  // Générer toutes les positions valides pour cette direction
+  const positions = [];
+  for (let r=0; r<n; r++) {
+    for (let c=0; c<n; c++) {
+      if (canPlace(grid, word, r, c, dir)) positions.push([r,c]);
+    }
+  }
+  if (positions.length === 0) return null;
+  // Choisir une position aléatoire parmi celles qui sont valides
+  const [r0,c0] = positions[randInt(positions.length)];
+  const cells = [];
+  for (let i=0; i<word.length; i++)
+    cells.push([r0+dir.dr*i, c0+dir.dc*i]);
+  doPlace(grid, word, r0, c0, dir);
+  return cells;
+}
+
+// Place un mot en respectant le quota de directions
+// dirPool : pool tournant de directions imposées
+function tryPlaceWord(grid, word, dirPool) {
+  // On essaie d'abord la direction suivante dans le pool (quota)
+  // Si elle échoue, on essaie toutes les autres par ordre aléatoire
+  const allDirs = shuffle([...DIR.H, ...DIR.V, ...DIR.D]);
+  const preferred = dirPool.shift();       // direction imposée par le quota
+  if (preferred) dirPool.push(preferred);  // remettre en fin de pool (circulaire)
+
+  // Essai direction du quota en premier
+  const ordered = preferred
+    ? [preferred, ...allDirs.filter(d => d !== preferred)]
+    : allDirs;
+
+  for (const dir of ordered) {
+    const testGrid = grid.map(r => [...r]);
+    const cells = tryPlaceInDir(testGrid, word, dir);
+    if (cells) {
+      // Appliquer à la vraie grille
+      for (let r=0; r<GRID_SIZE; r++)
+        for (let c=0; c<GRID_SIZE; c++)
+          grid[r][c] = testGrid[r][c];
+      return { cells, dir };
+    }
+  }
+  return null;
+}
+
+function countFree(grid) {
+  let n = 0;
+  for (let r=0; r<grid.length; r++)
+    for (let c=0; c<grid[r].length; c++)
+      if (grid[r][c] === null) n++;
+  return n;
+}
+
+function freeCellsInOrder(grid) {
+  const cells = [];
+  for (let r=0; r<grid.length; r++)
+    for (let c=0; c<grid[r].length; c++)
+      if (grid[r][c] === null) cells.push([r,c]);
+  return cells;
+}
+
+function generateGame(depth=0) {
+  if (depth > 500) return null;
+
+  const grid = makeGrid(GRID_SIZE);
+  const themeName = choice(Object.keys(THEMES));
+
+  // Filtrer les sous-mots ET trier du plus long au plus court
+  const pool = filterSubwords(
+    shuffle(THEMES[themeName]).filter(w => w.length >= 3 && w.length <= GRID_SIZE)
+  ).sort((a,b) => b.length - a.length);
+
+  const placed     = [];
+  const wordCells  = [];
+  const coverCount = {};
+
+  // Pool de directions avec quota (renouvellé à chaque génération)
+  const dirPool = buildDirPool();
+
+  for (const word of pool) {
+    const result = tryPlaceWord(grid, word, dirPool);
+    if (!result) continue;
+
+    const { cells } = result;
+
+    // Refuser si le mot n'apporte AUCUNE case nouvelle (doublon complet)
+    const newCells = cells.filter(([r,c]) => !coverCount[key(r,c)]);
+    if (newCells.length === 0) continue;
+
+    for (const [r,c] of cells)
+      coverCount[key(r,c)] = (coverCount[key(r,c)] || 0) + 1;
+
+    placed.push(word);
+    wordCells.push(cells);
+
+    // À partir de 8 mots, vérifier si les cases libres = longueur d'un secret
+    if (placed.length >= 8) {
+      const free = countFree(grid);
+      if (SECRET_LENGTHS.has(free)) {
+
+        let orphan = false;
+        for (let r=0; r<GRID_SIZE; r++) {
+          for (let c=0; c<GRID_SIZE; c++) {
+            if (grid[r][c] !== null && !coverCount[key(r,c)]) {
+              orphan = true; break;
+            }
+          }
+          if (orphan) break;
+        }
+        if (orphan) continue;
+
+        const secret = choice(SECRETS_BY_LEN[free]);
+        const freeCells = freeCellsInOrder(grid);
+
+        for (let i = 0; i < secret.length; i++) {
+          const [r,c] = freeCells[i];
+          grid[r][c] = secret[i];
+        }
+
+        const alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        for (let r=0; r<GRID_SIZE; r++)
+          for (let c=0; c<GRID_SIZE; c++)
+            if (grid[r][c] === null) grid[r][c] = alpha[randInt(alpha.length)];
+
+        return {
+          grid,
+          words:       placed,
+          wordCells,
+          hiddenWord:  secret,
+          secretCells: freeCells,
+          theme:       themeName,
+        };
+      }
+    }
+  }
+
+  return generateGame(depth + 1);
+}
+
+// ═══════════════════════════════════════════════════════
+//  CANVAS
+// ═══════════════════════════════════════════════════════
+const canvas = document.getElementById("grid-canvas");
+const ctx    = canvas.getContext("2d");
+
+let game          = null;
+let foundWords    = new Set();
+let usedCells     = [];   // cases colorées en vert (mots trouvés)
+let selCells      = [];
+let dragging      = false;
+let allFound      = false;
+let gameWon       = false;
+
+function initCanvas() {
+  const size = CELL * GRID_SIZE;
+  canvas.width = canvas.height = size;
+  document.getElementById("grid-wrap").style.width = size + "px";
+}
+
+function cellStyle(r, c) {
+  const isSel    = selCells.some(s => s.r===r && s.c===c);
+  const isUsed   = usedCells[r][c];
+  const isSecret = allFound && game.secretCells.some(([sr,sc]) => sr===r && sc===c);
+
+  if (isSel)    return { bg:"#cde4ff", border:"#4a90e2", text:"#222" };
+  if (isSecret) return { bg:"#ffe566", border:"#ccaa00", text:"#443300" };
+  if (isUsed)   return { bg:"#b5f5b5", border:"#3c9c3c", text:"#104010" };
+  return           { bg:"#ffffff",  border:"#cccccc",  text:"#222222" };
+}
+
+function drawGrid() {
+  if (!game) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  for (let r=0; r<GRID_SIZE; r++) {
+    for (let c=0; c<GRID_SIZE; c++) {
+      const x=c*CELL, y=r*CELL;
+      const {bg, border, text} = cellStyle(r, c);
+      ctx.fillStyle = bg;
+      ctx.beginPath();
+      ctx.roundRect(x+1, y+1, CELL-2, CELL-2, 3);
+      ctx.fill();
+      ctx.strokeStyle = border;
+      ctx.lineWidth = bg==="#ffffff" ? 0.7 : 1.5;
+      ctx.stroke();
+      ctx.fillStyle = text;
+      ctx.font = `bold ${Math.round(CELL*0.48)}px system-ui`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(game.grid[r][c], x+CELL/2, y+CELL/2);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  SÉLECTION
+// ═══════════════════════════════════════════════════════
+function pointToCell(cx, cy) {
+  const rect = canvas.getBoundingClientRect();
+  const sx = canvas.width/rect.width, sy = canvas.height/rect.height;
+  const x = (cx-rect.left)*sx, y = (cy-rect.top)*sy;
+  const c = Math.floor(x/CELL), r = Math.floor(y/CELL);
+  if (r<0||r>=GRID_SIZE||c<0||c>=GRID_SIZE) return null;
+  return {r, c};
+}
+
+function buildLine(from, to) {
+  const dr=to.r-from.r, dc=to.c-from.c;
+  const adr=Math.abs(dr), adc=Math.abs(dc);
+  if (adr!==0 && adc!==0 && adr!==adc) return null;
+  const steps=Math.max(adr,adc);
+  const sdr=Math.sign(dr), sdc=Math.sign(dc);
+  const line=[];
+  for (let i=0; i<=steps; i++) line.push({r:from.r+sdr*i, c:from.c+sdc*i});
+  return line;
+}
+
+function onStart(cx, cy) {
+  if (allFound) return;
+  const cell = pointToCell(cx, cy); if (!cell) return;
+  dragging=true; selCells=[cell]; drawGrid();
+}
+function onMove(cx, cy) {
+  if (!dragging) return;
+  const cell = pointToCell(cx, cy); if (!cell) return;
+  const line = buildLine(selCells[0], cell);
+  if (!line) return;
+  selCells = line; drawGrid();
+}
+function onEnd() {
+  if (!dragging) return;
+  dragging = false;
+  if (selCells.length >= 2) {
+    const word    = selCells.map(s => game.grid[s.r][s.c]).join("");
+    const wordRev = word.split("").reverse().join("");
+    const match   = game.words.find(w => w===word || w===wordRev);
+    if (match && !foundWords.has(match)) {
+      foundWords.add(match);
+      selCells.forEach(s => { usedCells[s.r][s.c] = true; });
+      markWordFound(match);
+      updateScore();
+      if (foundWords.size === game.words.length) onAllFound();
+    }
+  }
+  selCells = []; drawGrid();
+}
+
+function onAllFound() {
+  allFound = true;
+  drawGrid();
+  document.getElementById("mystery-zone").classList.add("visible");
+  document.getElementById("mystery-input").focus();
+}
+
+// Touch
+canvas.addEventListener("touchstart",  e=>{e.preventDefault();onStart(e.touches[0].clientX,e.touches[0].clientY);},{passive:false});
+canvas.addEventListener("touchmove",   e=>{e.preventDefault();onMove(e.touches[0].clientX,e.touches[0].clientY);},{passive:false});
+canvas.addEventListener("touchend",    e=>{e.preventDefault();onEnd();},{passive:false});
+canvas.addEventListener("touchcancel", e=>{e.preventDefault();selCells=[];dragging=false;drawGrid();},{passive:false});
+// Souris
+canvas.addEventListener("pointerdown", e=>{if(e.pointerType==="touch")return;onStart(e.clientX,e.clientY);});
+canvas.addEventListener("pointermove", e=>{if(e.pointerType==="touch")return;onMove(e.clientX,e.clientY);});
+window.addEventListener("pointerup",   e=>{if(e.pointerType==="touch")return;onEnd();});
+
+// ═══════════════════════════════════════════════════════
+//  SAISIE DU MOT MYSTÈRE
+// ═══════════════════════════════════════════════════════
+const mysteryInput  = document.getElementById("mystery-input");
+const mysteryResult = document.getElementById("mystery-result");
+
+function checkMystery() {
+  const val = mysteryInput.value.trim().toUpperCase().replace(/\s/g,"");
+  if (!val) return;
+  if (val === game.hiddenWord) {
+    gameWon = true;
+    mysteryResult.textContent = "🏆 Bravo ! Tu as gagné !";
+    mysteryResult.className = "win";
+    mysteryInput.disabled = true;
+    document.getElementById("mystery-submit").disabled = true;
+  } else {
+    mysteryInput.classList.remove("error");
+    void mysteryInput.offsetWidth;
+    mysteryInput.classList.add("error");
+    mysteryResult.textContent = "❌ Ce n'est pas le bon mot, réessaie !";
+    mysteryResult.className = "fail";
+    mysteryInput.value = "";
+    setTimeout(() => mysteryInput.classList.remove("error"), 400);
+  }
+}
+
+document.getElementById("mystery-submit").addEventListener("click", checkMystery);
+mysteryInput.addEventListener("keydown", e => { if (e.key==="Enter") checkMystery(); });
+mysteryInput.addEventListener("input", () => {
+  const pos = mysteryInput.selectionStart;
+  mysteryInput.value = mysteryInput.value.toUpperCase();
+  mysteryInput.setSelectionRange(pos, pos);
+});
+
+// ═══════════════════════════════════════════════════════
+//  UI
+// ═══════════════════════════════════════════════════════
+function renderWordList(words) {
+  const el = document.getElementById("word-list");
+  el.innerHTML = "";
+  [...words].sort().forEach(w => {
+    const s = document.createElement("span");
+    s.className="word-item"; s.textContent=w; s.dataset.word=w;
+    el.appendChild(s);
+  });
+}
+function markWordFound(word) {
+  document.querySelectorAll(".word-item").forEach(el => {
+    if (el.dataset.word===word) el.classList.add("found");
+  });
+}
+function updateScore() {
+  document.getElementById("score").textContent =
+    `${foundWords.size} / ${game.words.length} mots trouvés`;
+}
+
+// ═══════════════════════════════════════════════════════
+//  NOUVELLE PARTIE
+// ═══════════════════════════════════════════════════════
+function newGame() {
+  allFound = false; gameWon = false;
+  foundWords = new Set();
+  usedCells  = makeUsed(GRID_SIZE);
+  selCells   = []; dragging = false;
+
+  document.getElementById("mystery-zone").classList.remove("visible");
+  mysteryInput.value = "";
+  mysteryInput.disabled = false;
+  mysteryResult.textContent = "";
+  mysteryResult.className = "";
+  document.getElementById("mystery-submit").disabled = false;
+
+  game = generateGame();
+  if (!game) { setTimeout(newGame, 50); return; }
+
+  document.getElementById("theme-label").textContent = "Thème : " + game.theme;
+  renderWordList(game.words);
+  updateScore();
+  drawGrid();
+}
+
+document.getElementById("new-game").addEventListener("click", newGame);
+initCanvas();
+newGame();
+</script>
+
+<script>
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("service-worker.js");
+  }
+</script>
+</body>
+</html>
