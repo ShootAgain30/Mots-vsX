@@ -3,7 +3,9 @@ const CACHE = "mots-cache-multi-x-v1.0.2";
 const ASSETS = [
   "./",
   "./index.html",
-  "./manifest.webmanifest",
+  "./manifest.webmanifest"
+  "./multi.html",
+  "./solo.html",
   "./icone-192.png",
   "./icone-512.png"
 ];
