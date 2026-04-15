@@ -1,6 +1,6 @@
 {
   "name": "Mots cachés",
-  "short_name": "Mots",
+  "short_name": "Mots-vs",
   "start_url": "index.html",
   "display": "standalone",
   "display_override": ["fullscreen", "standalone"],
