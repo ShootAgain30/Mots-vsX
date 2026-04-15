@@ -1,6 +1,6 @@
 {
-  "name": "Mots-vs",
-  "short_name": "Mots-vs",
+  "name": "Mots-vsX",
+  "short_name": "Mots-vsX",
   "start_url": "index.html",
   "display": "standalone",
   "display_override": ["fullscreen", "standalone"],
