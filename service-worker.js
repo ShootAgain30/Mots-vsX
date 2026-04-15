@@ -1,11 +1,9 @@
-const CACHE = "mots-cache-multi-x-v1.0.9";
+const CACHE = "mots-cache-multi-x-v1.1.0";
 
 const ASSETS = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
-  "./multi.html",
-  "./solo.html",
   "./icone-192.png",
   "./icone-512.png"
 ];
