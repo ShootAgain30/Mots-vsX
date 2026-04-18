@@ -523,7 +523,7 @@ function findPlace(grid, word, wordCenters) {
       for (var c = 0; c < GRID_SIZE; c++)
         if (canPlace(grid, word, r, c, dir)) valid.push([r, c]);
     if (!valid.length) continue;
-    valid = shuffle(valid).slice(0, GRID_SIZE <= 12 ? 15 : 8);
+    valid = shuffle(valid); // tester toutes les positions, pas seulement un échantillon
     var foundInter = false;
     for (var vi = 0; vi < valid.length; vi++) {
       var r0 = valid[vi][0], c0 = valid[vi][1];
