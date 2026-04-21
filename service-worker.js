@@ -1,4 +1,4 @@
-const CACHE = "mots-cache-multi-x-v1.2.4";
+const CACHE = "mots-cache-multi-x-v1.2.5";
 
 const ASSETS = [
   "./",
